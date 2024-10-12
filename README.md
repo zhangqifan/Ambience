@@ -32,10 +32,13 @@ dependencies: [
 ```swift
 import Ambience
 
-let musicItemURL = URL(string: "https://music.apple.com/your-music-link")!
+// Example Apple Music playlist link
+let musicItemURL = URL(string: "https://music.apple.com/us/playlist/k-pop-rewind/pl.fa1e4b518c7244a086390d49aeb65d1e")!
+
 do {
     let ambienceURL = try await AmbienceService.fetchAmbienceAsset(from: musicItemURL)
     // Use the ambienceURL to display the video
+    print("Ambience URL: \(ambienceURL)")
 } catch {
     print("Error fetching ambience: \(error)")
 }
@@ -88,10 +91,54 @@ struct ContentView: View {
 ## Customization
 
 Ambience offers various customization options:
-	•	Content mode
-	•	Looping behavior
-	•	Auto-play settings
+- Content mode
+- Looping behavior
+- Auto-play settings
+  
 Check the documentation for more detailed information on available customizations.
+
+## Companion App
+
+To help you explore and test the capabilities of Ambience, I've included a companion app in this repository. This app demonstrates real-world usage of the Ambience package and offers the following features:
+
+1. **Music Item Link Testing**: 
+   - Input Apple Music item links directly
+   - Fetch and display Ambience resources for the input link
+   - Test the package's ability to handle various music item types
+
+2. **Personal Recommendations**:
+   - For users with an active Apple Music subscription
+   - Displays personalized music recommendations
+   - Quickly preview Ambience resources for recommended items
+
+This companion app serves as both a demonstration of Ambience's features and a practical tool for developers to test the package's functionality.
+
+## Setting Up and Using the Companion App
+
+To use the Companion app, you need to set up MusicKit for your own bundle identifier. Follow these steps:
+
+1. Clone this repository
+2. Open the `Ambience/AmbienceCompanion/AmbienceCompanion.xcodeproj` file in Xcode
+3. Change the bundle identifier to your own unique identifier
+
+### Enabling MusicKit
+
+1. Visit the [Apple Developer Portal](https://developer.apple.com)
+2. Navigate to `Certificates, Identifiers & Profiles`
+3. Select `Identifiers` from the left panel
+4. Find your App's Bundle Identifier from the list and select it
+5. Under `Services`, ensure `MusicKit` is enabled. If not, enable it
+
+### Running the App
+
+After setting up MusicKit:
+
+1. Build and run the app on your iOS device or simulator
+2. Use the app to:
+   - Test Ambience resources by inputting Apple Music links
+   - Browse your personal Apple Music recommendations and preview their Ambience resources
+
+Note: To use the personal recommendations feature, ensure you're signed in to your Apple Music account on the device.
 
 ## Contributing
 
