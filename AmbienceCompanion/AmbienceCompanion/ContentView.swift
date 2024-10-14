@@ -153,10 +153,10 @@ struct RecommendationView: View {
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    #if os(iOS)
-                    .stroke(Color(uiColor: .quaternarySystemFill), lineWidth: 0.5)
-                    #elseif os(macOS)
+                    #if os(macOS)
                     .stroke(Color(nsColor: .quaternaryLabelColor), lineWidth: 0.5)
+                    #else
+                    .stroke(Color(uiColor: .quaternarySystemFill), lineWidth: 0.5)
                     #endif
             }
 
