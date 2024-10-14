@@ -26,13 +26,13 @@ import AppKit
 public protocol AmbienceArtworkPlayerDelegate: AnyObject {
     /// Called when the player item's duration is updated.
     func ambiencePlayer(_ player: AmbienceArtworkPlayerView, didUpdateDuration duration: TimeInterval)
-    
+
     /// Called when the player item is ready to play.
     func ambiencePlayerIsReadyToPlay(_ player: AmbienceArtworkPlayerView)
-    
+
     /// Called when the player item is about to finish.
     func ambiencePlayerIsAboutToFinish(_ player: AmbienceArtworkPlayerView)
-    
+
     /// Called when the player item has finished playing.
     func ambiencePlayerDidFinish(_ player: AmbienceArtworkPlayerView)
 }
@@ -40,325 +40,325 @@ public protocol AmbienceArtworkPlayerDelegate: AnyObject {
 /// A custom view that wraps AVPlayer for ambience artwork video playback.
 #if os(iOS) || os(tvOS) || os(visionOS) || os(watchOS)
 public class AmbienceArtworkPlayerView: UIView {
-  // MARK: - Public Properties
-  
-  public weak var delegate: AmbienceArtworkPlayerDelegate?
-  public var isLoopingEnabled: Bool = true
-  public var shouldAutoPlay: Bool = true
-  
-  public var currentDuration: CMTime { player.currentItem?.duration ?? .zero }
-  public var currentTime: CMTime { player.currentTime() }
-  public var isPaused: Bool { player.timeControlStatus == .paused }
-  
-  public var artworkContentMode: UIView.ContentMode = .scaleAspectFit {
-    didSet {
-      updateVideoGravity()
+    // MARK: - Public Properties
+
+    public weak var delegate: AmbienceArtworkPlayerDelegate?
+    public var isLoopingEnabled: Bool = true
+    public var shouldAutoPlay: Bool = true
+
+    public var currentDuration: CMTime { player.currentItem?.duration ?? .zero }
+    public var currentTime: CMTime { player.currentTime() }
+    public var isPaused: Bool { player.timeControlStatus == .paused }
+
+    public var artworkContentMode: UIView.ContentMode = .scaleAspectFit {
+        didSet {
+            updateVideoGravity()
+        }
     }
-  }
-  
-  public var cornerRadius: CGFloat = 0 {
-    didSet {
-      updateCornerProperties()
+
+    public var cornerRadius: CGFloat = 0 {
+        didSet {
+            updateCornerProperties()
+        }
     }
-  }
-  
-  public var cornerCurve: CALayerCornerCurve = .continuous {
-    didSet {
-      updateCornerProperties()
+
+    public var cornerCurve: CALayerCornerCurve = .continuous {
+        didSet {
+            updateCornerProperties()
+        }
     }
-  }
-  
-  // MARK: - Private Properties
-  
-  private let player = AVPlayer()
-  private var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
-  private var timeObserver: Any?
-  private var itemObservation: NSKeyValueObservation?
-  
-  // MARK: - Initialization
-  
-  override public init(frame: CGRect) {
-    super.init(frame: frame)
-    setupPlayer()
-    setupNotifications()
-  }
-  
-  required init?(coder: NSCoder) {
-    super.init(coder: coder)
-    setupPlayer()
-    setupNotifications()
-  }
-  
-  deinit {
-    removeNotifications()
-    removePlayerObservers()
-  }
-  
-  override public class var layerClass: AnyClass { AVPlayerLayer.self }
-  
-  // MARK: - Public Methods
-  
-  public func updatePlayerItem(with url: URL, shouldAutoPlay: Bool = true) {
-    self.shouldAutoPlay = shouldAutoPlay
-    let playerItem = AVPlayerItem(url: url)
-    
-    removePlayerObservers()
-    player.replaceCurrentItem(with: playerItem)
-    addPlayerObservers()
-    
-    if shouldAutoPlay {
-      play()
+
+    // MARK: - Private Properties
+
+    private let player = AVPlayer()
+    private var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    private var timeObserver: Any?
+    private var itemObservation: NSKeyValueObservation?
+
+    // MARK: - Initialization
+
+    override public init(frame: CGRect) {
+        super.init(frame: frame)
+        setupPlayer()
+        setupNotifications()
     }
-  }
-  
-  public func play() {
-    player.play()
-  }
-  
-  public func pause() {
-    player.pause()
-  }
-  
-  public func seek(to time: CMTime, completion: @escaping () -> Void) {
-    player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
-      guard let self = self, finished else { return }
-      self.play()
-      completion()
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupPlayer()
+        setupNotifications()
     }
-  }
-  
-  // MARK: - Private Methods
-  
-  private func setupPlayer() {
-    playerLayer.player = player
-    updateVideoGravity()
-    updateCornerProperties()
-  }
-  
-  private func setupNotifications() {
-    NotificationCenter.default.addObserver(self, selector: #selector(playerItemDidReachEnd), name: .AVPlayerItemDidPlayToEndTime, object: nil)
-  }
-  
-  private func removeNotifications() {
-    NotificationCenter.default.removeObserver(self)
-  }
-  
-  private func addPlayerObservers() {
-    itemObservation = player.currentItem?.observe(\.status, options: [.new]) { [weak self] item, _ in
-      guard let self = self else { return }
-      if item.status == .readyToPlay {
-        self.delegate?.ambiencePlayerIsReadyToPlay(self)
-        self.delegate?.ambiencePlayer(self, didUpdateDuration: CMTimeGetSeconds(item.duration))
-      }
+
+    deinit {
+        removeNotifications()
+        removePlayerObservers()
     }
-    
-    let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-    timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-      guard let self = self, let duration = self.player.currentItem?.duration else { return }
-      let timeLeft = CMTimeSubtract(duration, time)
-      if timeLeft.seconds <= 1.2 {
-        self.delegate?.ambiencePlayerIsAboutToFinish(self)
-      }
+
+    override public class var layerClass: AnyClass { AVPlayerLayer.self }
+
+    // MARK: - Public Methods
+
+    public func updatePlayerItem(with url: URL, shouldAutoPlay: Bool = true) {
+        self.shouldAutoPlay = shouldAutoPlay
+        let playerItem = AVPlayerItem(url: url)
+
+        removePlayerObservers()
+        player.replaceCurrentItem(with: playerItem)
+        addPlayerObservers()
+
+        if shouldAutoPlay {
+            play()
+        }
     }
-  }
-  
-  private func removePlayerObservers() {
-    itemObservation?.invalidate()
-    itemObservation = nil
-    
-    if let observer = timeObserver {
-      player.removeTimeObserver(observer)
-      timeObserver = nil
+
+    public func play() {
+        player.play()
     }
-  }
-  
-  private func updateVideoGravity() {
-    switch artworkContentMode {
-    case .scaleAspectFit:
-      playerLayer.videoGravity = .resizeAspect
-    case .scaleAspectFill:
-      playerLayer.videoGravity = .resizeAspectFill
-    default:
-      playerLayer.videoGravity = .resize
+
+    public func pause() {
+        player.pause()
     }
-  }
-  
-  private func updateCornerProperties() {
-    layer.cornerRadius = cornerRadius
-    layer.cornerCurve = cornerCurve
-    layer.masksToBounds = cornerRadius > 0
-  }
-  
-  @objc private func playerItemDidReachEnd(_ notification: Notification) {
-    guard let playerItem = notification.object as? AVPlayerItem,
-          playerItem == player.currentItem else { return }
-    
-    delegate?.ambiencePlayerDidFinish(self)
-    
-    if isLoopingEnabled {
-      player.seek(to: .zero)
-      player.play()
+
+    public func seek(to time: CMTime, completion: @escaping () -> Void) {
+        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+            guard let self = self, finished else { return }
+            self.play()
+            completion()
+        }
     }
-  }
+
+    // MARK: - Private Methods
+
+    private func setupPlayer() {
+        playerLayer.player = player
+        updateVideoGravity()
+        updateCornerProperties()
+    }
+
+    private func setupNotifications() {
+        NotificationCenter.default.addObserver(self, selector: #selector(playerItemDidReachEnd), name: .AVPlayerItemDidPlayToEndTime, object: nil)
+    }
+
+    private func removeNotifications() {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    private func addPlayerObservers() {
+        itemObservation = player.currentItem?.observe(\.status, options: [.new]) { [weak self] item, _ in
+            guard let self = self else { return }
+            if item.status == .readyToPlay {
+                self.delegate?.ambiencePlayerIsReadyToPlay(self)
+                self.delegate?.ambiencePlayer(self, didUpdateDuration: CMTimeGetSeconds(item.duration))
+            }
+        }
+
+        let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            guard let self = self, let duration = self.player.currentItem?.duration else { return }
+            let timeLeft = CMTimeSubtract(duration, time)
+            if timeLeft.seconds <= 1.2 {
+                self.delegate?.ambiencePlayerIsAboutToFinish(self)
+            }
+        }
+    }
+
+    private func removePlayerObservers() {
+        itemObservation?.invalidate()
+        itemObservation = nil
+
+        if let observer = timeObserver {
+            player.removeTimeObserver(observer)
+            timeObserver = nil
+        }
+    }
+
+    private func updateVideoGravity() {
+        switch artworkContentMode {
+            case .scaleAspectFit:
+                playerLayer.videoGravity = .resizeAspect
+            case .scaleAspectFill:
+                playerLayer.videoGravity = .resizeAspectFill
+            default:
+                playerLayer.videoGravity = .resize
+        }
+    }
+
+    private func updateCornerProperties() {
+        layer.cornerRadius = cornerRadius
+        layer.cornerCurve = cornerCurve
+        layer.masksToBounds = cornerRadius > 0
+    }
+
+    @objc private func playerItemDidReachEnd(_ notification: Notification) {
+        guard let playerItem = notification.object as? AVPlayerItem,
+              playerItem == player.currentItem else { return }
+
+        delegate?.ambiencePlayerDidFinish(self)
+
+        if isLoopingEnabled {
+            player.seek(to: .zero)
+            player.play()
+        }
+    }
 }
 #endif
 
 #if os(macOS)
 public class AmbienceArtworkPlayerView: NSView {
-  // MARK: - Public Properties
-  
-  public weak var delegate: AmbienceArtworkPlayerDelegate?
-  public var isLoopingEnabled: Bool = true
-  public var shouldAutoPlay: Bool = true
-  
-  public var currentDuration: CMTime { player.currentItem?.duration ?? .zero }
-  public var currentTime: CMTime { player.currentTime() }
-  public var isPaused: Bool { player.timeControlStatus == .paused }
-  
+    // MARK: - Public Properties
+
+    public weak var delegate: AmbienceArtworkPlayerDelegate?
+    public var isLoopingEnabled: Bool = true
+    public var shouldAutoPlay: Bool = true
+
+    public var currentDuration: CMTime { player.currentItem?.duration ?? .zero }
+    public var currentTime: CMTime { player.currentTime() }
+    public var isPaused: Bool { player.timeControlStatus == .paused }
+
     public var artworkContentMode: AVLayerVideoGravity = .resizeAspect {
-    didSet {
-      updateVideoGravity()
+        didSet {
+            updateVideoGravity()
+        }
     }
-  }
-  
-  public var cornerRadius: CGFloat = 0 {
-    didSet {
-      updateCornerProperties()
+
+    public var cornerRadius: CGFloat = 0 {
+        didSet {
+            updateCornerProperties()
+        }
     }
-  }
-  
-  public var cornerCurve: CALayerCornerCurve = .continuous {
-    didSet {
-      updateCornerProperties()
+
+    public var cornerCurve: CALayerCornerCurve = .continuous {
+        didSet {
+            updateCornerProperties()
+        }
     }
-  }
-  
-  // MARK: - Private Properties
-  
-  private let player = AVPlayer()
-  private var playerLayer: AVPlayerLayer!
-  private var timeObserver: Any?
-  private var itemObservation: NSKeyValueObservation?
-  
-  // MARK: - Initialization
-  
-  override init(frame: NSRect) {
-    super.init(frame: frame)
-    setupPlayer()
-    setupNotifications()
-  }
-  
-  required init?(coder: NSCoder) {
-    super.init(coder: coder)
-    setupPlayer()
-    setupNotifications()
-  }
-  
-  deinit {
-    removeNotifications()
-    removePlayerObservers()
-  }
-  
-  // MARK: - Public Methods
-  
-  public func updatePlayerItem(with url: URL, shouldAutoPlay: Bool = true) {
-    self.shouldAutoPlay = shouldAutoPlay
-    let playerItem = AVPlayerItem(url: url)
-    
-    removePlayerObservers()
-    player.replaceCurrentItem(with: playerItem)
-    addPlayerObservers()
-    
-    if shouldAutoPlay {
-      play()
+
+    // MARK: - Private Properties
+
+    private let player = AVPlayer()
+    private var playerLayer: AVPlayerLayer!
+    private var timeObserver: Any?
+    private var itemObservation: NSKeyValueObservation?
+
+    // MARK: - Initialization
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setupPlayer()
+        setupNotifications()
     }
-  }
-  
-  public func play() {
-    player.play()
-  }
-  
-  public func pause() {
-    player.pause()
-  }
-  
-  public func seek(to time: CMTime, completion: @escaping () -> Void) {
-    player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
-      guard let self = self, finished else { return }
-      self.play()
-      completion()
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupPlayer()
+        setupNotifications()
     }
-  }
-  
-  // MARK: - Private Methods
-  
-  private func setupPlayer() {
-    playerLayer = AVPlayerLayer()
-    playerLayer.player = player
-    layer = playerLayer
-    wantsLayer = true
-    updateVideoGravity()
-    updateCornerProperties()
-  }
-  
-  private func setupNotifications() {
-    NotificationCenter.default.addObserver(self, selector: #selector(playerItemDidReachEnd), name: .AVPlayerItemDidPlayToEndTime, object: nil)
-  }
-  
-  private func removeNotifications() {
-    NotificationCenter.default.removeObserver(self)
-  }
-  
-  private func addPlayerObservers() {
-    itemObservation = player.currentItem?.observe(\.status, options: [.new]) { [weak self] item, _ in
-      guard let self = self else { return }
-      if item.status == .readyToPlay {
-        self.delegate?.ambiencePlayerIsReadyToPlay(self)
-        self.delegate?.ambiencePlayer(self, didUpdateDuration: CMTimeGetSeconds(item.duration))
-      }
+
+    deinit {
+        removeNotifications()
+        removePlayerObservers()
     }
-    
-    let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-    timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-      guard let self = self, let duration = self.player.currentItem?.duration else { return }
-      let timeLeft = CMTimeSubtract(duration, time)
-      if timeLeft.seconds <= 1.2 {
-        self.delegate?.ambiencePlayerIsAboutToFinish(self)
-      }
+
+    // MARK: - Public Methods
+
+    public func updatePlayerItem(with url: URL, shouldAutoPlay: Bool = true) {
+        self.shouldAutoPlay = shouldAutoPlay
+        let playerItem = AVPlayerItem(url: url)
+
+        removePlayerObservers()
+        player.replaceCurrentItem(with: playerItem)
+        addPlayerObservers()
+
+        if shouldAutoPlay {
+            play()
+        }
     }
-  }
-  
-  private func removePlayerObservers() {
-    itemObservation?.invalidate()
-    itemObservation = nil
-    
-    if let observer = timeObserver {
-      player.removeTimeObserver(observer)
-      timeObserver = nil
+
+    public func play() {
+        player.play()
     }
-  }
-  
-  private func updateVideoGravity() {
-    playerLayer.videoGravity = artworkContentMode
-  }
-  
-  private func updateCornerProperties() {
-    layer?.cornerRadius = cornerRadius
-    layer?.cornerCurve = cornerCurve
-    layer?.masksToBounds = cornerRadius > 0
-  }
-  
-  @objc private func playerItemDidReachEnd(_ notification: Notification) {
-    guard let playerItem = notification.object as? AVPlayerItem,
-          playerItem == player.currentItem else { return }
-    
-    delegate?.ambiencePlayerDidFinish(self)
-    
-    if isLoopingEnabled {
-      player.seek(to: .zero)
-      player.play()
+
+    public func pause() {
+        player.pause()
     }
-  }
+
+    public func seek(to time: CMTime, completion: @escaping () -> Void) {
+        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+            guard let self = self, finished else { return }
+            self.play()
+            completion()
+        }
+    }
+
+    // MARK: - Private Methods
+
+    private func setupPlayer() {
+        playerLayer = AVPlayerLayer()
+        playerLayer.player = player
+        layer = playerLayer
+        wantsLayer = true
+        updateVideoGravity()
+        updateCornerProperties()
+    }
+
+    private func setupNotifications() {
+        NotificationCenter.default.addObserver(self, selector: #selector(playerItemDidReachEnd), name: .AVPlayerItemDidPlayToEndTime, object: nil)
+    }
+
+    private func removeNotifications() {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    private func addPlayerObservers() {
+        itemObservation = player.currentItem?.observe(\.status, options: [.new]) { [weak self] item, _ in
+            guard let self = self else { return }
+            if item.status == .readyToPlay {
+                self.delegate?.ambiencePlayerIsReadyToPlay(self)
+                self.delegate?.ambiencePlayer(self, didUpdateDuration: CMTimeGetSeconds(item.duration))
+            }
+        }
+
+        let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            guard let self = self, let duration = self.player.currentItem?.duration else { return }
+            let timeLeft = CMTimeSubtract(duration, time)
+            if timeLeft.seconds <= 1.2 {
+                self.delegate?.ambiencePlayerIsAboutToFinish(self)
+            }
+        }
+    }
+
+    private func removePlayerObservers() {
+        itemObservation?.invalidate()
+        itemObservation = nil
+
+        if let observer = timeObserver {
+            player.removeTimeObserver(observer)
+            timeObserver = nil
+        }
+    }
+
+    private func updateVideoGravity() {
+        playerLayer.videoGravity = artworkContentMode
+    }
+
+    private func updateCornerProperties() {
+        layer?.cornerRadius = cornerRadius
+        layer?.cornerCurve = cornerCurve
+        layer?.masksToBounds = cornerRadius > 0
+    }
+
+    @objc private func playerItemDidReachEnd(_ notification: Notification) {
+        guard let playerItem = notification.object as? AVPlayerItem,
+              playerItem == player.currentItem else { return }
+
+        delegate?.ambiencePlayerDidFinish(self)
+
+        if isLoopingEnabled {
+            player.seek(to: .zero)
+            player.play()
+        }
+    }
 }
 #endif
 
