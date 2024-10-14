@@ -1,16 +1,20 @@
 # Ambience
 
-Ambience is a Swift package that provides seamless integration of Apple Music's ambient (animated or motion) video artwork into iOS applications, enhancing the visual experience of music playback.
+Ambience is a Swift package that provides seamless integration of Apple Music's ambient (animated or motion) video artwork into iOS/visionOS/macOS/tvOS and watchOS applications, enhancing the visual experience of music playback.
 
 ## Features
 
 - Fetch ambient video artwork from Apple Music links
-- Easy-to-use UIKit and SwiftUI components for displaying ambient videos
+- Easy-to-use UIKit, AppKit and SwiftUI components for displaying ambient videos
 - Support for various playback controls and customizations
 
 ## Requirements
 
 - iOS 16.0+
+- visionOS 1.0+
+- macOS 14.0+
+- tvOS 16.0+
+- watchOS 9.0+
 - Swift 5.9+
 
 ## Installation
