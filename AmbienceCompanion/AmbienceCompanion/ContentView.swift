@@ -22,8 +22,12 @@ struct ContentView: View {
                 ambiencePreviewSectionView
             }
             .navigationTitle("Ambience Companion")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $term, placement: .navigationBarDrawer, prompt: Text("Your Music Item Link"))
+            #else
+            .searchable(text: $term, prompt: Text("Your Music Item Link"))
+            #endif
             .onSubmit(of: .search) {
                 if let url = URL(string: term) {
                     selectedUserMusicItemURL = url
@@ -36,7 +40,11 @@ struct ContentView: View {
         Section {
             HintView()
         }
+#if os(macOS)
+        .listRowBackground(Color(nsColor: .quaternarySystemFill))
+#else
         .listRowBackground(Color(uiColor: .quaternarySystemFill))
+#endif
     }
 
     private var recommendationItemsSectionView: some View {
@@ -107,8 +115,10 @@ struct RecommendationView: View {
                                 if selectedUserMusicItem != musicItem {
                                     selectedUserMusicItem = musicItem
                                     onItemSelected(musicItem)
+                                    #if os(iOS)
                                     let impact = UIImpactFeedbackGenerator(style: .soft)
                                     impact.impactOccurred()
+                                    #endif
                                 }
                             }
                     }
@@ -143,7 +153,11 @@ struct RecommendationView: View {
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    #if os(macOS)
+                    .stroke(Color(nsColor: .quaternaryLabelColor), lineWidth: 0.5)
+                    #else
                     .stroke(Color(uiColor: .quaternarySystemFill), lineWidth: 0.5)
+                    #endif
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -175,7 +189,11 @@ struct AmbiencePreviewView: View {
                     .progressViewStyle(CircularProgressViewStyle())
             } else if let url = ambienceURL {
                 AmbienceArtworkPlayer(url: url)
+                    #if os(macOS)
+                    .ambienceArtworkContentMode(.resizeAspect)
+                    #else
                     .ambienceArtworkContentMode(.scaleAspectFit)
+                    #endif
                     .ambienceLooping(true)
                     .ambienceAutoPlay(true)
                     .aspectRatio(16 / 9, contentMode: .fit)
