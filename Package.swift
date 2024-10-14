@@ -6,7 +6,11 @@ import PackageDescription
 let package = Package(
     name: "Ambience",
     platforms: [
-        .iOS(.v16)
+        .iOS(.v16),
+        .visionOS(.v1),
+        .tvOS(.v16),
+        .watchOS(.v9),
+        .macOS(.v14)
     ],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
