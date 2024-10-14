@@ -25,7 +25,7 @@ To integrate Ambience into your Xcode project using Swift Package Manager, add i
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zhangqifan/Ambience.git", .upToNextMajor(from: "1.0.0"))
+    .package(url: "https://github.com/zhangqifan/Ambience.git", .upToNextMajor(from: "1.1.0"))
 ]
 ```
 
@@ -102,6 +102,8 @@ Ambience offers various customization options:
 Check the documentation for more detailed information on available customizations.
 
 ## Companion App
+
+https://github.com/user-attachments/assets/26929fa8-e110-412d-b5a7-70c2d90f014a
 
 To help you explore and test the capabilities of Ambience, I've included a companion app in this repository. This app demonstrates real-world usage of the Ambience package and offers the following features:
 
