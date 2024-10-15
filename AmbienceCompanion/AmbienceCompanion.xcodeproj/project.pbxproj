@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		01CEE7742CBA7CBE004E33A9 /* Ambience in Frameworks */ = {isa = PBXBuildFile; productRef = 01CEE7732CBA7CBE004E33A9 /* Ambience */; };
+		01D35B912CBE49580078A273 /* Ambience in Frameworks */ = {isa = PBXBuildFile; productRef = 01D35B902CBE49580078A273 /* Ambience */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -27,7 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				01CEE7742CBA7CBE004E33A9 /* Ambience in Frameworks */,
+				01D35B912CBE49580078A273 /* Ambience in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -70,7 +70,7 @@
 			);
 			name = AmbienceCompanion;
 			packageProductDependencies = (
-				01CEE7732CBA7CBE004E33A9 /* Ambience */,
+				01D35B902CBE49580078A273 /* Ambience */,
 			);
 			productName = AmbienceCompanion;
 			productReference = 01CEE7502CBA7C0C004E33A9 /* AmbienceCompanion.app */;
@@ -101,7 +101,7 @@
 			mainGroup = 01CEE7472CBA7C0C004E33A9;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				01CEE7722CBA7CBE004E33A9 /* XCRemoteSwiftPackageReference "Ambience" */,
+				01D35B8F2CBE49580078A273 /* XCLocalSwiftPackageReference "../../Ambience" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 01CEE7512CBA7C0C004E33A9 /* Products */;
@@ -350,21 +350,16 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		01CEE7722CBA7CBE004E33A9 /* XCRemoteSwiftPackageReference "Ambience" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/zhangqifan/Ambience.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.0.0;
-			};
+/* Begin XCLocalSwiftPackageReference section */
+		01D35B8F2CBE49580078A273 /* XCLocalSwiftPackageReference "../../Ambience" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../Ambience;
 		};
-/* End XCRemoteSwiftPackageReference section */
+/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		01CEE7732CBA7CBE004E33A9 /* Ambience */ = {
+		01D35B902CBE49580078A273 /* Ambience */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 01CEE7722CBA7CBE004E33A9 /* XCRemoteSwiftPackageReference "Ambience" */;
 			productName = Ambience;
 		};
 /* End XCSwiftPackageProductDependency section */

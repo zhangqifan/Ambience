@@ -16,9 +16,9 @@ import AVFoundation
 import Combine
 import SwiftUI
 
-#if os(iOS) || os(visionOS) || os(tvOS) || os(watchOS)
+#if canImport(UIKit)
 import UIKit
-#elseif os(macOS)
+#elseif canImport(AppKit)
 import AppKit
 #endif
 
@@ -38,7 +38,7 @@ public protocol AmbienceArtworkPlayerDelegate: AnyObject {
 }
 
 /// A custom view that wraps AVPlayer for ambience artwork video playback.
-#if os(iOS) || os(tvOS) || os(visionOS) || os(watchOS)
+#if canImport(UIKit)
 public class AmbienceArtworkPlayerView: UIView {
     // MARK: - Public Properties
 
@@ -53,18 +53,6 @@ public class AmbienceArtworkPlayerView: UIView {
     public var artworkContentMode: UIView.ContentMode = .scaleAspectFit {
         didSet {
             updateVideoGravity()
-        }
-    }
-
-    public var cornerRadius: CGFloat = 0 {
-        didSet {
-            updateCornerProperties()
-        }
-    }
-
-    public var cornerCurve: CALayerCornerCurve = .continuous {
-        didSet {
-            updateCornerProperties()
         }
     }
 
@@ -132,7 +120,16 @@ public class AmbienceArtworkPlayerView: UIView {
     private func setupPlayer() {
         playerLayer.player = player
         updateVideoGravity()
-        updateCornerProperties()
+        setupAudioSession()
+    }
+
+    private func setupAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            print("Failed to set audio session category: \(error)")
+        }
     }
 
     private func setupNotifications() {
@@ -183,12 +180,6 @@ public class AmbienceArtworkPlayerView: UIView {
         }
     }
 
-    private func updateCornerProperties() {
-        layer.cornerRadius = cornerRadius
-        layer.cornerCurve = cornerCurve
-        layer.masksToBounds = cornerRadius > 0
-    }
-
     @objc private func playerItemDidReachEnd(_ notification: Notification) {
         guard let playerItem = notification.object as? AVPlayerItem,
               playerItem == player.currentItem else { return }
@@ -203,7 +194,7 @@ public class AmbienceArtworkPlayerView: UIView {
 }
 #endif
 
-#if os(macOS)
+#if canImport(AppKit)
 public class AmbienceArtworkPlayerView: NSView {
     // MARK: - Public Properties
 
@@ -218,18 +209,6 @@ public class AmbienceArtworkPlayerView: NSView {
     public var artworkContentMode: AVLayerVideoGravity = .resizeAspect {
         didSet {
             updateVideoGravity()
-        }
-    }
-
-    public var cornerRadius: CGFloat = 0 {
-        didSet {
-            updateCornerProperties()
-        }
-    }
-
-    public var cornerCurve: CALayerCornerCurve = .continuous {
-        didSet {
-            updateCornerProperties()
         }
     }
 
@@ -298,7 +277,6 @@ public class AmbienceArtworkPlayerView: NSView {
         layer = playerLayer
         wantsLayer = true
         updateVideoGravity()
-        updateCornerProperties()
     }
 
     private func setupNotifications() {
@@ -342,12 +320,6 @@ public class AmbienceArtworkPlayerView: NSView {
         playerLayer.videoGravity = artworkContentMode
     }
 
-    private func updateCornerProperties() {
-        layer?.cornerRadius = cornerRadius
-        layer?.cornerCurve = cornerCurve
-        layer?.masksToBounds = cornerRadius > 0
-    }
-
     @objc private func playerItemDidReachEnd(_ notification: Notification) {
         guard let playerItem = notification.object as? AVPlayerItem,
               playerItem == player.currentItem else { return }
@@ -364,15 +336,13 @@ public class AmbienceArtworkPlayerView: NSView {
 
 // MARK: - SwiftUI Support
 
-#if os(iOS) || os(visionOS) || os(tvOS) || os(watchOS)
+#if canImport(UIKit)
 public struct AmbienceArtworkPlayer: UIViewRepresentable {
     var url: URL?
     var delegate: AmbienceArtworkPlayerDelegate?
     var isLoopingEnabled: Bool
     var shouldAutoPlay: Bool
     var artworkContentMode: UIView.ContentMode
-    var cornerRadius: CGFloat
-    var cornerCurve: CALayerCornerCurve
 
     /// Initializes a new instance of AmbienceArtworkPlayer.
     ///
@@ -382,24 +352,18 @@ public struct AmbienceArtworkPlayer: UIViewRepresentable {
     ///   - isLoopingEnabled: Determines if the player should loop the artwork.
     ///   - shouldAutoPlay: Determines if the player should start playing automatically.
     ///   - artworkContentMode: The content mode for displaying the artwork.
-    ///   - cornerRadius: The corner radius of the player view.
-    ///   - cornerCurve: The corner curve style of the player view.
     public init(
         url: URL?,
         delegate: AmbienceArtworkPlayerDelegate? = nil,
         isLoopingEnabled: Bool = true,
         shouldAutoPlay: Bool = true,
-        artworkContentMode: UIView.ContentMode = .scaleAspectFit,
-        cornerRadius: CGFloat = 0,
-        cornerCurve: CALayerCornerCurve = .continuous
+        artworkContentMode: UIView.ContentMode = .scaleAspectFit
     ) {
         self.url = url
         self.delegate = delegate
         self.isLoopingEnabled = isLoopingEnabled
         self.shouldAutoPlay = shouldAutoPlay
         self.artworkContentMode = artworkContentMode
-        self.cornerRadius = cornerRadius
-        self.cornerCurve = cornerCurve
     }
 
     public func makeUIView(context: Context) -> AmbienceArtworkPlayerView {
@@ -408,8 +372,6 @@ public struct AmbienceArtworkPlayer: UIViewRepresentable {
         view.isLoopingEnabled = isLoopingEnabled
         view.shouldAutoPlay = shouldAutoPlay
         view.artworkContentMode = artworkContentMode
-        view.cornerRadius = cornerRadius
-        view.cornerCurve = cornerCurve
         return view
     }
 
@@ -419,8 +381,6 @@ public struct AmbienceArtworkPlayer: UIViewRepresentable {
         }
         uiView.isLoopingEnabled = isLoopingEnabled
         uiView.artworkContentMode = artworkContentMode
-        uiView.cornerRadius = cornerRadius
-        uiView.cornerCurve = cornerCurve
     }
 }
 
@@ -442,19 +402,11 @@ public extension AmbienceArtworkPlayer {
         view.shouldAutoPlay = shouldAutoPlay
         return view
     }
-
-    func ambienceCornerRadius(_ radius: CGFloat, curve: CALayerCornerCurve = .continuous) -> AmbienceArtworkPlayer {
-        var view = self
-        view.cornerRadius = radius
-        view.cornerCurve = curve
-        return view
-    }
 }
 #endif
 
-#if os(macOS)
+#if canImport(AppKit)
 public struct AmbienceArtworkPlayer: NSViewRepresentable {
-
     /// The URL of the artwork to be played.
     var url: URL?
 
@@ -470,12 +422,6 @@ public struct AmbienceArtworkPlayer: NSViewRepresentable {
     /// The content mode for displaying the artwork.
     var artworkContentMode: AVLayerVideoGravity
 
-    /// The corner radius of the player view.
-    var cornerRadius: CGFloat
-
-    /// The corner curve style of the player view.
-    var cornerCurve: CALayerCornerCurve
-
     /// Initializes a new instance of AmbienceArtworkPlayerMac.
     ///
     /// - Parameters:
@@ -484,24 +430,18 @@ public struct AmbienceArtworkPlayer: NSViewRepresentable {
     ///   - isLoopingEnabled: Determines if the player should loop the artwork.
     ///   - shouldAutoPlay: Determines if the player should start playing automatically.
     ///   - artworkContentMode: The content mode for displaying the artwork.
-    ///   - cornerRadius: The corner radius of the player view.
-    ///   - cornerCurve: The corner curve style of the player view.
     public init(
         url: URL?,
         delegate: AmbienceArtworkPlayerDelegate? = nil,
         isLoopingEnabled: Bool = true,
         shouldAutoPlay: Bool = true,
-        artworkContentMode: AVLayerVideoGravity = .resizeAspect,
-        cornerRadius: CGFloat = 0,
-        cornerCurve: CALayerCornerCurve = .continuous
+        artworkContentMode: AVLayerVideoGravity = .resizeAspect
     ) {
         self.url = url
         self.delegate = delegate
         self.isLoopingEnabled = isLoopingEnabled
         self.shouldAutoPlay = shouldAutoPlay
         self.artworkContentMode = artworkContentMode
-        self.cornerRadius = cornerRadius
-        self.cornerCurve = cornerCurve
     }
 
     public func makeNSView(context: Context) -> AmbienceArtworkPlayerView {
@@ -510,8 +450,6 @@ public struct AmbienceArtworkPlayer: NSViewRepresentable {
         view.isLoopingEnabled = isLoopingEnabled
         view.shouldAutoPlay = shouldAutoPlay
         view.artworkContentMode = artworkContentMode
-        view.cornerRadius = cornerRadius
-        view.cornerCurve = cornerCurve
         return view
     }
 
@@ -521,13 +459,10 @@ public struct AmbienceArtworkPlayer: NSViewRepresentable {
         }
         nsView.isLoopingEnabled = isLoopingEnabled
         nsView.artworkContentMode = artworkContentMode
-        nsView.cornerRadius = cornerRadius
-        nsView.cornerCurve = cornerCurve
     }
 }
 
 public extension AmbienceArtworkPlayer {
-
     /// Sets the content mode for the artwork.
     ///
     /// - Parameter mode: The desired content mode.
@@ -555,19 +490,6 @@ public extension AmbienceArtworkPlayer {
     func ambienceAutoPlay(_ shouldAutoPlay: Bool) -> AmbienceArtworkPlayer {
         var view = self
         view.shouldAutoPlay = shouldAutoPlay
-        return view
-    }
-
-    /// Sets the corner radius and curve of the player view.
-    ///
-    /// - Parameters:
-    ///   - radius: The desired corner radius.
-    ///   - curve: The desired corner curve style.
-    /// - Returns: A new instance of AmbienceArtworkPlayerMac with the updated corner properties.
-    func ambienceCornerRadius(_ radius: CGFloat, curve: CALayerCornerCurve = .continuous) -> AmbienceArtworkPlayer {
-        var view = self
-        view.cornerRadius = radius
-        view.cornerCurve = curve
         return view
     }
 }
