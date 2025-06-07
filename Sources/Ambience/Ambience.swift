@@ -18,7 +18,10 @@ import MusicKit
 
 /// Main class for handling Ambience-related operations
 public enum AmbienceService {
-    
+    /// set the cache limit of ambience assets
+    public static var cacheLimit = 100
+    /// set the target bitrate for ambience assets
+    public static var targetBitrate:Double = 300_000
     /// Errors that can occur during ambience artwork download
     public enum AmbienceError: Error {
         case invalidURL
@@ -63,9 +66,7 @@ public enum AmbienceService {
         } else {
             adjustedURL = musicItemSourceURL
         }
-        
-        let htmlContent = try await HTMLFetcher.fetchHTMLContent(from: adjustedURL)
-        return try AmbienceArtworkExtractor.extractAmbienceArtworkURL(from: htmlContent)
+        return try await HLSAssetManager.shared.downloadAsset(from:adjustedURL)
     }
 }
 
@@ -126,7 +127,7 @@ private enum URLAdjuster {
 }
 
 /// Struct responsible for fetching HTML content
-private enum HTMLFetcher {
+enum HTMLFetcher {
     
     /// Fetches HTML content from a given URL
     /// - Parameter url: The URL to fetch HTML content from
@@ -150,7 +151,7 @@ private enum HTMLFetcher {
 }
 
 /// Struct responsible for extracting ambience artwork URL from HTML content
-private enum AmbienceArtworkExtractor {
+enum AmbienceArtworkExtractor {
     /// Extracts the ambience artwork URL from the given HTML content
     /// - Parameter htmlContent: The HTML content to extract the URL from
     /// - Returns: The URL of the ambience artwork

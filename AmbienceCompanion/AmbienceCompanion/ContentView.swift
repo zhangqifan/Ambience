@@ -10,74 +10,6 @@ import MusicKit
 import SwiftUI
 import AVFoundation
 
-class HLSDownloader: NSObject, ObservableObject, AVAssetDownloadDelegate {
-    @Published var localURL: URL?
-    @Published var isLoading = false
-    @Published var errorMessage: String?
-
-    private var downloadSession: AVAssetDownloadURLSession!
-    private var downloadTask: AVAssetDownloadTask?
-
-    override init() {
-        super.init()
-        let config = URLSessionConfiguration.background(withIdentifier: "com.ambience.hlsdownload")
-        downloadSession = AVAssetDownloadURLSession(configuration: config, assetDownloadDelegate: self, delegateQueue: .main)
-    }
-
-    func downloadHLS(from remoteURL: URL) async{
-        isLoading = true
-        errorMessage = nil
-        localURL = nil
-
-        let asset = AVURLAsset(url: remoteURL)
-        
-        // 异步加载变体信息
-        guard let variants = try? await asset.load(.variants) else {return}
-                        
-                // 筛选分辨率不超过 800x800 的变体
-                let filteredVariants = variants.filter { variant in
-                    guard let size = variant.videoAttributes?.presentationSize else {
-                        return false
-                    }
-                    return size.width >= 800 && size.height >= 800
-                }
-                
-                // 从符合条件的变体中选择码率最高的（质量最好的）
-        let selectedVariant = filteredVariants.min { $0.averageBitRate! < $1.averageBitRate!}!// 备选：选择分辨率最小的
-                
-                var options: [String: Any] = [:]
-        print("选择的变体 - 分辨率: \(selectedVariant.videoAttributes?.presentationSize), 码率: \(selectedVariant.peakBitRate ?? 0) bps")
-                    options[AVAssetDownloadTaskMinimumRequiredMediaBitrateKey] = selectedVariant.peakBitRate
-                self.downloadTask = self.downloadSession.makeAssetDownloadTask(
-                    asset: asset, 
-                    assetTitle: "Ambience", 
-                    assetArtworkData: nil, 
-                    options: options.isEmpty ? nil : options
-                )
-                self.downloadTask?.resume()
-            
-        
-    }
-
-    // 下载完成回调
-    func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask, didFinishDownloadingTo location: URL) {
-        DispatchQueue.main.async {
-            self.localURL = location
-            self.isLoading = false
-        }
-    }
-
-    // 错误处理
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error = error {
-            DispatchQueue.main.async {
-                self.errorMessage = error.localizedDescription
-                self.isLoading = false
-            }
-        }
-    }
-}
-
 struct ContentView: View {
     @StateObject private var musicService = MusicService()
     @State private var term: String = ""
@@ -247,16 +179,20 @@ struct RecommendationView: View {
 
 struct AmbiencePreviewView: View {
     let userMusicItemURL: URL?
-    @StateObject private var hlsDownloader = HLSDownloader()
+    
+    @State private var localAmbienceURL: URL?
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @State private var shareableURL: URL?
 #if os(iOS)
     @State private var isSharePresented = false
 #endif
 
     var body: some View {
         VStack {
-            if hlsDownloader.isLoading {
+            if isLoading {
                 ProgressView()
-            } else if let url = hlsDownloader.localURL {
+            } else if let url = localAmbienceURL {
                 AmbienceArtworkPlayer(url: url)
                     #if os(macOS)
                     .ambienceArtworkContentMode(.resizeAspect)
@@ -265,11 +201,10 @@ struct AmbiencePreviewView: View {
                     #endif
                     .ambienceLooping(true)
                     .ambienceAutoPlay(true)
-                    .rotation3DEffect(.degrees(30), axis: (1,0,0))
                     .aspectRatio(16 / 9, contentMode: .fit)
                 // 分享按钮
                 shareButton(for: url)
-            } else if let error = hlsDownloader.errorMessage {
+            } else if let error = errorMessage {
                 Text(error)
                     .foregroundColor(.red)
             } else {
@@ -278,44 +213,105 @@ struct AmbiencePreviewView: View {
             }
         }
         .onChange(of: userMusicItemURL) { newValue in
-            if let newValue {
-                // 先获取远程 m3u8 地址
-                Task {
-                    do {
-                        let remoteURL = try await AmbienceService.fetchAmbienceAsset(from: newValue, adjustRegion: false)
-                        await hlsDownloader.downloadHLS(from: remoteURL)
-                    } catch {
-                        hlsDownloader.errorMessage = error.localizedDescription
-                    }
-                }
-            } else {
-                hlsDownloader.errorMessage = "Invalid music item URL."
-                hlsDownloader.isLoading = false
-                hlsDownloader.localURL = nil
+            Task {
+                await loadAmbience(for: newValue)
             }
         }
+        .onAppear {
+             Task {
+                await loadAmbience(for: userMusicItemURL)
+            }
+        }
+    }
+    
+    private func loadAmbience(for url: URL?) async {
+        guard let url = url else {
+            // Reset view to initial state if URL is nil
+            localAmbienceURL = nil
+            errorMessage = nil
+            isLoading = false
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+        localAmbienceURL = nil
+
+        do {
+            let remoteURL = try await AmbienceService.fetchAmbienceAsset(from: url, adjustRegion: false)
+            localAmbienceURL = remoteURL
+        } catch {
+            errorMessage = "Failed to load ambience: \(error.localizedDescription)"
+        }
+        isLoading = false
     }
 
     @ViewBuilder
     private func shareButton(for url: URL) -> some View {
-#if os(iOS)
         Button {
-            isSharePresented = true
+            Task {
+                // HLS assets are directories, so we zip it for sharing
+                shareableURL = await zipDirectory(at: url)
+                #if os(iOS)
+                if shareableURL != nil {
+                    isSharePresented = true
+                }
+                #elseif os(macOS)
+                if let shareableURL = shareableURL {
+                    showMacShare(url: shareableURL)
+                }
+                #endif
+            }
         } label: {
             Label("分享此文件", systemImage: "square.and.arrow.up")
         }
         .padding(.top, 8)
+        #if os(iOS)
         .sheet(isPresented: $isSharePresented) {
-            ShareSheet(activityItems: [url])
+            if let shareableURL = shareableURL {
+                ShareSheet(activityItems: [shareableURL])
+            }
         }
-#elseif os(macOS)
-        Button {
-            showMacShare(url: url)
-        } label: {
-            Label("分享此文件", systemImage: "square.and.arrow.up")
-        }
-        .padding(.top, 8)
-#endif
+        #endif
+    }
+    
+    private func zipDirectory(at directoryURL: URL) async -> URL? {
+        // Zipping can be slow, so run it in a background thread.
+        return await Task.detached(priority: .userInitiated) {
+            let fileManager = FileManager.default
+            let zipURL = fileManager.temporaryDirectory.appendingPathComponent(directoryURL.lastPathComponent).appendingPathExtension("zip")
+            try? fileManager.removeItem(at: zipURL)
+            
+            do {
+                var isDirectory: ObjCBool = false
+                guard fileManager.fileExists(atPath: directoryURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                     return nil // Not a directory, cannot zip
+                }
+                
+                let coordinator = NSFileCoordinator()
+                var error: NSError?
+                var zipResultURL: URL?
+
+                coordinator.coordinate(readingItemAt: directoryURL, options: [.forUploading], error: &error) { (zippedURL) in
+                    do {
+                        try fileManager.moveItem(at: zippedURL, to: zipURL)
+                        zipResultURL = zipURL
+                    } catch {
+                        print("Failed to move zipped file: \(error)")
+                    }
+                }
+                
+                if let error = error {
+                    print("Failed to zip directory: \(error)")
+                    return nil
+                }
+                return zipResultURL
+                
+            } catch {
+                print("Zipping failed with error: \(error)")
+                return nil
+            }
+        }.value
     }
 
 #if os(macOS)
