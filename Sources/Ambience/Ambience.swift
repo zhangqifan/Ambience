@@ -77,14 +77,15 @@ private enum URLAdjuster {
     /// - Returns: An adjusted URL that matches the device's region
     /// - Throws: An error if the URL adjustment fails
     static func adjustURLForRegion(_ url: URL) async throws -> URL {
-        let deviceRegionIdentifier = Locale.current.region?.identifier.lowercased()
-        let amCode = try await MusicDataRequest.currentCountryCode
-        
-        guard amCode != deviceRegionIdentifier else {
-            return url
-        }
-        
-        return try replaceStorefront(in: url, from: amCode, to: deviceRegionIdentifier)
+        return url
+//        let deviceRegionIdentifier = Locale.current.region?.identifier.lowercased()
+//        let amCode = try await MusicDataRequest.currentCountryCode
+//        
+//        guard amCode != deviceRegionIdentifier else {
+//            return url
+//        }
+//        
+//        return try replaceStorefront(in: url, from: amCode, to: deviceRegionIdentifier)
     }
     
     /// Replaces the storefront in the given URL
