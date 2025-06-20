@@ -33,6 +33,10 @@ class HLSAssetManager: NSObject, ObservableObject {
     private var downloadContinuations: [AVAssetDownloadTask: CheckedContinuation<URL, Error>] = [:]
 
     private override init() {
+        
+        assert(cacheLimit >= 0, "Can not set a negative cache limit.")
+        assert(targetBitrate >= 0, "Can not set a negative bitrate.")
+        
         let fileManager = FileManager.default
         // Create a dedicated directory for HLS assets in Caches
         let cacheBaseURL = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
@@ -67,7 +71,7 @@ class HLSAssetManager: NSObject, ObservableObject {
 
     /// Downloads an HLS asset from a remote URL and stores it in the cache.
     /// If the asset is already being downloaded, it awaits the result of the existing download.
-    func downloadAsset(from remoteURL: URL) async throws -> URL {
+    func getAsset(from remoteURL: URL) async throws -> URL {
         // If already cached, return the local URL immediately.
         if let localURL = localAssetURL(for: remoteURL) {
             Self.logger.info("Cache hit for URL: \(remoteURL.absoluteString)")
@@ -194,14 +198,20 @@ private extension HLSAssetManager {
         let localFilename: String
         let creationDate: Date
     }
-    /// only use the album Id as the key
+    /// try to extract the album id or the playlist id as the key to improve cache hit rate.
     func safeFilename(for url: URL) -> String {
         let urlString = url.absoluteString
         var name = urlString
         if let match = urlString.range(of: #"album/[^/]+/(\d+)"#, options: .regularExpression) {
             let path = urlString[match]
             if let id = path.split(separator: "/").last {
-                Self.logger.info("Convert the id to \(id)")
+                Self.logger.info("Convert the id to album \(id)")
+                name = String(id)
+            }
+        } else if let match = urlString.range(of: #"playlist/[^/]+/(\d+)"#, options: .regularExpression) {
+            let path = urlString[match]
+            if let id = path.split(separator: "/").last {
+                Self.logger.info("Convert the id to playlist \(id)")
                 name = String(id)
             }
         }

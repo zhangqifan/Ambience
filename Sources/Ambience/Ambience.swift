@@ -66,7 +66,7 @@ public enum AmbienceService {
         } else {
             adjustedURL = musicItemSourceURL
         }
-        return try await HLSAssetManager.shared.downloadAsset(from:adjustedURL)
+        return try await HLSAssetManager.shared.getAsset(from:adjustedURL)
     }
 }
 
