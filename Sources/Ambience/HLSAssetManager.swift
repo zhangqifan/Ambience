@@ -203,19 +203,32 @@ private extension HLSAssetManager {
         let urlString = url.absoluteString
         var name = urlString
         if let match = urlString.range(of: #"album/[^/]+/(\d+)"#, options: .regularExpression) {
+            //https://music.apple.com/cn/album/lover/1468058165?l=en-GB
             let path = urlString[match]
             if let id = path.split(separator: "/").last {
                 Self.logger.info("Convert the id to album \(id)")
                 name = String(id)
-            }
-        } else if let match = urlString.range(of: #"playlist/[^/]+/(\d+)"#, options: .regularExpression) {
-            let path = urlString[match]
-            if let id = path.split(separator: "/").last {
-                Self.logger.info("Convert the id to playlist \(id)")
-                name = String(id)
+                return name+".movpkg"
             }
         }
-        return name + ".movpkg"
+        if let match = urlString.range(of:"pl\\.([a-zA-Z0-9]+)", options: .regularExpression) {
+            //https://music.apple.com/cn/playlist/12-星座歌单-巨蟹月/pl.00ead18e05ad4267b7a7f167923dc79f
+            let path = urlString[match]
+            if let id = path.split(separator: ".").last {
+                Self.logger.info("Convert the id to playlist \(id)")
+                name = String(id)
+                return name+".movpkg"
+            }
+        }
+        
+        //if can not match the album or the playlist,then fallback.
+        if urlString.hasPrefix("https://music.apple.com") {
+            let trimmed = urlString
+                .replacingOccurrences(of: "https://music.apple.com", with: "")
+                .replacingOccurrences(of: "/", with: "")
+            return trimmed+".movpkg"
+        }
+        return name+".movpkg"
     }
 
     func loadMetadata() {
