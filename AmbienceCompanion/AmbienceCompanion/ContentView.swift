@@ -8,7 +8,6 @@
 import Ambience
 import MusicKit
 import SwiftUI
-import AVFoundation
 
 struct ContentView: View {
     @StateObject private var musicService = MusicService()
@@ -179,20 +178,16 @@ struct RecommendationView: View {
 
 struct AmbiencePreviewView: View {
     let userMusicItemURL: URL?
-    
-    @State private var localAmbienceURL: URL?
+    @State private var ambienceURL: URL?
     @State private var isLoading = false
     @State private var errorMessage: String?
-    @State private var shareableURL: URL?
-#if os(iOS)
-    @State private var isSharePresented = false
-#endif
 
     var body: some View {
         VStack {
             if isLoading {
                 ProgressView()
-            } else if let url = localAmbienceURL {
+                    .progressViewStyle(CircularProgressViewStyle())
+            } else if let url = ambienceURL {
                 AmbienceArtworkPlayer(url: url)
                     #if os(macOS)
                     .ambienceArtworkContentMode(.resizeAspect)
@@ -202,8 +197,6 @@ struct AmbiencePreviewView: View {
                     .ambienceLooping(true)
                     .ambienceAutoPlay(true)
                     .aspectRatio(16 / 9, contentMode: .fit)
-                // 分享按钮
-                shareButton(for: url)
             } else if let error = errorMessage {
                 Text(error)
                     .foregroundColor(.red)
@@ -213,132 +206,38 @@ struct AmbiencePreviewView: View {
             }
         }
         .onChange(of: userMusicItemURL) { newValue in
-            Task {
-                await loadAmbience(for: newValue)
-            }
-        }
-        .onAppear {
-             Task {
-                await loadAmbience(for: userMusicItemURL)
+            if let newValue {
+                loadAmbienceURL(for: newValue)
+            } else {
+                errorMessage = "Invalid music item URL."
+                isLoading = false
+                ambienceURL = nil
             }
         }
     }
-    
-    private func loadAmbience(for url: URL?) async {
-        guard let url = url else {
-            // Reset view to initial state if URL is nil
-            localAmbienceURL = nil
-            errorMessage = nil
-            isLoading = false
-            return
-        }
 
+    private func loadAmbienceURL(for url: URL) {
         isLoading = true
         errorMessage = nil
-        localAmbienceURL = nil
+        ambienceURL = nil
 
-        do {
-            let remoteURL = try await AmbienceService.fetchAmbienceAsset(from: url, adjustRegion: false)
-            localAmbienceURL = remoteURL
-        } catch {
-            errorMessage = "Failed to load ambience: \(error.localizedDescription)"
-        }
-        isLoading = false
-    }
-
-    @ViewBuilder
-    private func shareButton(for url: URL) -> some View {
-        Button {
-            Task {
-                // HLS assets are directories, so we zip it for sharing
-                shareableURL = await zipDirectory(at: url)
-                #if os(iOS)
-                if shareableURL != nil {
-                    isSharePresented = true
-                }
-                #elseif os(macOS)
-                if let shareableURL = shareableURL {
-                    showMacShare(url: shareableURL)
-                }
-                #endif
-            }
-        } label: {
-            Label("分享此文件", systemImage: "square.and.arrow.up")
-        }
-        .padding(.top, 8)
-        #if os(iOS)
-        .sheet(isPresented: $isSharePresented) {
-            if let shareableURL = shareableURL {
-                ShareSheet(activityItems: [shareableURL])
-            }
-        }
-        #endif
-    }
-    
-    private func zipDirectory(at directoryURL: URL) async -> URL? {
-        // Zipping can be slow, so run it in a background thread.
-        return await Task.detached(priority: .userInitiated) {
-            let fileManager = FileManager.default
-            let zipURL = fileManager.temporaryDirectory.appendingPathComponent(directoryURL.lastPathComponent).appendingPathExtension("zip")
-            try? fileManager.removeItem(at: zipURL)
-            
+        Task {
             do {
-                var isDirectory: ObjCBool = false
-                guard fileManager.fileExists(atPath: directoryURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-                     return nil // Not a directory, cannot zip
-                }
-                
-                let coordinator = NSFileCoordinator()
-                var error: NSError?
-                var zipResultURL: URL?
+                let configURL = try await AmbienceService.fetchAmbienceAsset(from: url)
 
-                coordinator.coordinate(readingItemAt: directoryURL, options: [.forUploading], error: &error) { (zippedURL) in
-                    do {
-                        try fileManager.moveItem(at: zippedURL, to: zipURL)
-                        zipResultURL = zipURL
-                    } catch {
-                        print("Failed to move zipped file: \(error)")
-                    }
+                await MainActor.run {
+                    ambienceURL = configURL
+                    isLoading = false
                 }
-                
-                if let error = error {
-                    print("Failed to zip directory: \(error)")
-                    return nil
-                }
-                return zipResultURL
-                
             } catch {
-                print("Zipping failed with error: \(error)")
-                return nil
+                await MainActor.run {
+                    errorMessage = "Failed to load ambience: \(error.localizedDescription)"
+                    isLoading = false
+                }
             }
-        }.value
-    }
-
-#if os(macOS)
-    private func showMacShare(url: URL) {
-        let picker = NSSharingServicePicker(items: [url])
-        if let window = NSApplication.shared.keyWindow,
-           let contentView = window.contentView {
-            picker.show(relativeTo: .zero, of: contentView, preferredEdge: .minY)
         }
     }
-#endif
 }
-
-// iOS 分享 Sheet 封装
-#if os(iOS)
-import UIKit
-struct ShareSheet: UIViewControllerRepresentable {
-    let activityItems: [Any]
-    let applicationActivities: [UIActivity]? = nil
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: applicationActivities)
-        return controller
-    }
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-#endif
 
 #Preview {
     ContentView()
