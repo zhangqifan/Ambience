@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "Ambience",
     platforms: [
-        .iOS(.v16),
+        .iOS(.v15),
         .visionOS(.v1),
         .tvOS(.v16),
         .watchOS(.v9),

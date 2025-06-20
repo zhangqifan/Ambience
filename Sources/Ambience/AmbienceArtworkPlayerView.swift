@@ -62,6 +62,7 @@ public class AmbienceArtworkPlayerView: UIView {
     private var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
     private var timeObserver: Any?
     private var itemObservation: NSKeyValueObservation?
+    private var wasPlayingBeforeResigningActive = false
 
     // MARK: - Initialization
 
@@ -134,6 +135,8 @@ public class AmbienceArtworkPlayerView: UIView {
 
     private func setupNotifications() {
         NotificationCenter.default.addObserver(self, selector: #selector(playerItemDidReachEnd), name: .AVPlayerItemDidPlayToEndTime, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appWillResignActive), name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
     }
 
     private func removeNotifications() {
@@ -180,6 +183,16 @@ public class AmbienceArtworkPlayerView: UIView {
         }
     }
 
+    @objc private func appWillResignActive() {
+        wasPlayingBeforeResigningActive = !isPaused
+    }
+
+    @objc private func appDidBecomeActive() {
+        if wasPlayingBeforeResigningActive {
+            play()
+        }
+    }
+
     @objc private func playerItemDidReachEnd(_ notification: Notification) {
         guard let playerItem = notification.object as? AVPlayerItem,
               playerItem == player.currentItem else { return }
@@ -218,6 +231,7 @@ public class AmbienceArtworkPlayerView: NSView {
     private var playerLayer: AVPlayerLayer!
     private var timeObserver: Any?
     private var itemObservation: NSKeyValueObservation?
+    private var wasPlayingBeforeResigningActive = false
 
     // MARK: - Initialization
 
@@ -281,6 +295,8 @@ public class AmbienceArtworkPlayerView: NSView {
 
     private func setupNotifications() {
         NotificationCenter.default.addObserver(self, selector: #selector(playerItemDidReachEnd), name: .AVPlayerItemDidPlayToEndTime, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appWillResignActive), name: NSApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive), name: NSApplication.didBecomeActiveNotification, object: nil)
     }
 
     private func removeNotifications() {
@@ -318,6 +334,16 @@ public class AmbienceArtworkPlayerView: NSView {
 
     private func updateVideoGravity() {
         playerLayer.videoGravity = artworkContentMode
+    }
+
+    @objc private func appWillResignActive() {
+        wasPlayingBeforeResigningActive = !isPaused
+    }
+
+    @objc private func appDidBecomeActive() {
+        if wasPlayingBeforeResigningActive {
+            play()
+        }
     }
 
     @objc private func playerItemDidReachEnd(_ notification: Notification) {
