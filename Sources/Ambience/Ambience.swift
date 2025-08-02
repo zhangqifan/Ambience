@@ -41,8 +41,8 @@ public enum AmbienceService {
         case tryBoth
     }
     
-    /// 是否优先使用地区调整的URL
-    public static var regionFirst: Bool {
+    /// If true, the region-adjusted URL will be tried first, otherwise the account URL will be tried first
+    private static var regionFirst: Bool {
         get {
             return UserDefaults.standard.bool(forKey: "Ambience_regionFirst")
         }
@@ -91,7 +91,6 @@ public enum AmbienceService {
         case .followRegion:
             return try await HLSAssetManager.shared.getAsset(from: adjustedURL)
         case .tryBoth:
-            // 根据 regionFirst 设置决定尝试顺序
             if regionFirst {
                 do {
                     return try await HLSAssetManager.shared.getAsset(from: adjustedURL)
