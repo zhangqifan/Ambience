@@ -7,10 +7,11 @@ Ambience is a Swift package that provides seamless integration of Apple Music's 
 - Fetch ambient video artwork from Apple Music links
 - Easy-to-use UIKit, AppKit and SwiftUI components for displaying ambient videos
 - Support for various playback controls and customizations
+- Advanced downloading and caching system for HLS video assets
 
 ## Requirements
 
-- iOS 16.0+
+- iOS 15.0+
 - visionOS 1.0+
 - macOS 14.0+
 - tvOS 16.0+
@@ -27,6 +28,20 @@ To integrate Ambience into your Xcode project using Swift Package Manager, add i
 dependencies: [
     .package(url: "https://github.com/zhangqifan/Ambience.git", .upToNextMajor(from: "1.1.1"))
 ]
+```
+
+## Configuration
+
+Ambience provides configurable options for HLS asset management:
+
+```swift
+import Ambience
+
+// Configure cache limit (default: 100)
+AmbienceService.cacheLimit = 50
+
+// Configure target bitrate for video quality (default: 300,000 bps)
+AmbienceService.targetBitrate = 500_000
 ```
 
 ## Usage
