@@ -28,45 +28,87 @@ public enum AmbienceService {
         case invalidHTMLContent
         case noAmbienceArtworkFound
         case networkError
+        case redirectedToHomepage
+    }
+    
+    /// Policy for choosing which storefront to use when fetching ambience assets
+    public enum StorefrontChoosePolicy {
+        /// Use only the account's storefront (original URL without region adjustment)
+        case followAccount
+        /// Use only the device's region storefront (URL adjusted to match device region)
+        case followRegion
+        /// Try both storefronts with fallback mechanism, controlled by `regionFirst` property
+        case tryBoth
+    }
+    
+    /// If true, the region-adjusted URL will be tried first, otherwise the account URL will be tried first
+    private static var regionFirst: Bool {
+        get {
+            return UserDefaults.standard.bool(forKey: "Ambience_regionFirst")
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "Ambience_regionFirst")
+        }
     }
     
     /// Fetches the ambience asset configuration file URL for a given music item source URL
     /// - Parameters:
     ///   - musicItemSourceURL: The URL of the music item source
-    ///   - adjustRegion: A boolean flag indicating whether to adjust the URL for the current region. Defaults to true.
+    ///   - storefrontPolicy: The policy for choosing which storefront to use (default: .tryBoth)
     /// - Returns: The URL of the ambience asset configuration file
     /// - Throws: `AmbienceError` if any error occurs during the process
     ///
-    /// - Note: The `adjustRegion` parameter is crucial in certain scenarios where the user's physical location
+    /// - Note: The `storefrontPolicy` parameter is crucial in certain scenarios where the user's physical location
     ///   doesn't match their Apple Music subscription region. For example:
     ///
     ///   A user located in mainland China might have an Apple Music subscription registered in the United States.
     ///   In this case, when trying to access certain playlists (especially Apple Music's official curated playlists
     ///   like Heavy Rotation Mix), the default behavior might fail to retrieve the Ambience content.
     ///
-    ///   By setting `adjustRegion` to `true`, the method adjusts the storefront in the URL to match the user's
-    ///   current region. This allows the retrieval of Ambience content that corresponds to the user's current
-    ///   location and language in most scenarios.
+    ///   The `regionFirst` property controls the priority when using `.tryBoth` policy:
+    ///   - If `regionFirst` is `true`, it tries region-adjusted URL first, then falls back to account URL
+    ///   - If `regionFirst` is `false`, it tries account URL first, then falls back to region-adjusted URL
     ///
     ///   Example usage:
     ///   ```
-    ///   // Adjust region (default behavior)
+    ///   // Try both account and region storefronts (default behavior)
     ///   let ambienceURL = try await AmbienceService.fetchAmbienceAsset(from: musicItemURL)
     ///
-    ///   // Don't adjust region
-    ///   let ambienceURLWithoutAdjustment = try await AmbienceService.fetchAmbienceAsset(from: musicItemURL, adjustRegion: false)
+    ///   // Only use account storefront
+    ///   let accountOnlyURL = try await AmbienceService.fetchAmbienceAsset(from: musicItemURL, storefrontPolicy: .followAccount)
+    ///
+    ///   // Only use region storefront
+    ///   let regionOnlyURL = try await AmbienceService.fetchAmbienceAsset(from: musicItemURL, storefrontPolicy: .followRegion)
     ///   ```
     public static func fetchAmbienceAsset(
         from musicItemSourceURL: URL,
-        adjustRegion: Bool = true
+        storefrontPolicy: StorefrontChoosePolicy = .tryBoth
     ) async throws -> URL {
-        let adjustedURL: URL
-        if adjustRegion {
-            adjustedURL = try await URLAdjuster.adjustURLForRegion(musicItemSourceURL)
-        } else {
-            adjustedURL = musicItemSourceURL
+        let adjustedURL = try await URLAdjuster.adjustURLForRegion(musicItemSourceURL)
+        switch storefrontPolicy {
+        case .followAccount:
+            return try await HLSAssetManager.shared.getAsset(from: musicItemSourceURL)
+        case .followRegion:
+            return try await HLSAssetManager.shared.getAsset(from: adjustedURL)
+        case .tryBoth:
+            if regionFirst {
+                do {
+                    return try await HLSAssetManager.shared.getAsset(from: adjustedURL)
+                } catch AmbienceError.redirectedToHomepage {
+                    let res = try await HLSAssetManager.shared.getAsset(from: musicItemSourceURL)
+                    regionFirst = false
+                    return res
+                }
+            } else {
+                do {
+                    return try await HLSAssetManager.shared.getAsset(from: musicItemSourceURL)
+                } catch AmbienceError.redirectedToHomepage {
+                    let res = try await HLSAssetManager.shared.getAsset(from: adjustedURL)
+                    regionFirst = true
+                    return res
+                }
+            }
         }
-        return try await HLSAssetManager.shared.getAsset(from:adjustedURL)
     }
 }
 
@@ -78,15 +120,19 @@ private enum URLAdjuster {
     /// - Returns: An adjusted URL that matches the device's region
     /// - Throws: An error if the URL adjustment fails
     static func adjustURLForRegion(_ url: URL) async throws -> URL {
-        return url
-//        let deviceRegionIdentifier = Locale.current.region?.identifier.lowercased()
-//        let amCode = try await MusicDataRequest.currentCountryCode
-//        
-//        guard amCode != deviceRegionIdentifier else {
-//            return url
-//        }
-//        
-//        return try replaceStorefront(in: url, from: amCode, to: deviceRegionIdentifier)
+        let deviceRegionIdentifier: String?
+        if #available(iOS 16, *) {
+            deviceRegionIdentifier = Locale.current.region?.identifier.lowercased()
+        } else {
+            deviceRegionIdentifier = Locale.current.regionCode?.lowercased()
+        }
+        let amCode = try await MusicDataRequest.currentCountryCode
+        
+        guard let deviceRegionIdentifier = deviceRegionIdentifier, amCode != deviceRegionIdentifier else {
+            return url
+        }
+        
+        return try replaceStorefront(in: url, from: amCode, to: deviceRegionIdentifier)
     }
     
     /// Replaces the storefront in the given URL
@@ -129,16 +175,38 @@ private enum URLAdjuster {
 /// Struct responsible for fetching HTML content
 enum HTMLFetcher {
     
+    private class RedirectDetector: NSObject, URLSessionTaskDelegate {
+        var hasRedirected = false
+        
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+            if response.statusCode == 302 {
+                hasRedirected = true
+                completionHandler(nil)
+            } else {
+                completionHandler(request)
+            }
+        }
+    }
+    
     /// Fetches HTML content from a given URL
     /// - Parameter url: The URL to fetch HTML content from
     /// - Returns: The HTML content as a string
     /// - Throws: An error if the network request fails or the response is invalid
     static func fetchHTMLContent(from url: URL) async throws -> String {
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let redirectDetector = RedirectDetector()
+        let session = URLSession(configuration: .default, delegate: redirectDetector, delegateQueue: nil)
         
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200 ... 299).contains(httpResponse.statusCode)
-        else {
+        let (data, response) = try await session.data(from: url)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AmbienceService.AmbienceError.networkError
+        }
+        
+        if redirectDetector.hasRedirected {
+            throw AmbienceService.AmbienceError.redirectedToHomepage
+        }
+        
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
             throw AmbienceService.AmbienceError.networkError
         }
         

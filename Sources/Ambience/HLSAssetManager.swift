@@ -6,12 +6,11 @@ import os
 /// Manages downloading and caching of HLS assets.
 /// This class is a singleton that handles the entire lifecycle of HLS video assets,
 /// including downloading, storing with a predictable filename, and enforcing a cache limit.
-class HLSAssetManager: NSObject, ObservableObject {
+actor HLSAssetManager: NSObject {
     static let shared = HLSAssetManager()
 
-    // MARK: - Published Properties for UI
-    @Published var isDownloading = false
-    @Published var currentError: String?
+    var isDownloading = false
+    var currentError: String?
 
     // MARK: - Private Properties
     private var downloadSession: AVAssetDownloadURLSession!
@@ -90,22 +89,20 @@ class HLSAssetManager: NSObject, ObservableObject {
         let downloadTask = Task {
             defer {
                 // Clean up after the task is complete
-                Task { @MainActor in
                     self.activeDownloadTasks.removeValue(forKey: hlsURL)
                     self.sourceLookUpTable.removeValue(forKey: hlsURL)
                     self.isDownloading = false
-                }
+                
             }
             Self.logger.info("Cache miss for URL: \(hlsURL.absoluteString). Starting new download.")
             return try await performDownload(from: hlsURL)
         }
 
         // Store the new task
-        await MainActor.run {
             self.isDownloading = true
             self.activeDownloadTasks[hlsURL] = downloadTask
             self.sourceLookUpTable[hlsURL] = remoteURL
-        }
+        
 
         return try await downloadTask.value
     }
@@ -151,7 +148,7 @@ class HLSAssetManager: NSObject, ObservableObject {
 
 // MARK: - AVAssetDownloadDelegate
 extension HLSAssetManager: AVAssetDownloadDelegate {
-    func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask, didFinishDownloadingTo location: URL) {
+    func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask, didFinishDownloadingTo location: URL) async {
         guard let continuation = downloadContinuations.removeValue(forKey: assetDownloadTask) else { return }
         
         let hlsURL = assetDownloadTask.urlAsset.url
@@ -177,7 +174,7 @@ extension HLSAssetManager: AVAssetDownloadDelegate {
         }
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) async {
         guard let assetDownloadTask = task as? AVAssetDownloadTask,
               let continuation = downloadContinuations.removeValue(forKey: assetDownloadTask) else {
             return
