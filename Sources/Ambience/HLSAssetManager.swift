@@ -1,6 +1,13 @@
-import Foundation
+//
+//  HLSAssetManager.swift
+//  Ambience
+//
+//  Created by Shuhari on 2024/10/12.
+//  Copyright © 2024 Shuhari. All rights reserved.
+//
+
 import AVFoundation
-import CryptoKit
+import Foundation
 import os
 
 /// Manages downloading and caching of HLS assets.
@@ -8,268 +15,396 @@ import os
 /// including downloading, storing with a predictable filename, and enforcing a cache limit.
 actor HLSAssetManager: NSObject {
     static let shared = HLSAssetManager()
-
-    var isDownloading = false
-    var currentError: String?
-
+    
+    // MARK: - Public Properties
+    
+    /// Current download status
+    public private(set) var isDownloading = false
+    
+    /// Progress callback for download updates
+    public var onProgressUpdate: ((DownloadProgress) -> Void)?
+    
+    /// Enable or disable detailed debug logging
+    /// - Note: Changing this after initialization will not affect sub-managers
+    public var enableDebugLogging: Bool {
+        get { configuration.enableDebugLogging }
+        set {
+            var mutableConfig = configuration
+            mutableConfig.enableDebugLogging = newValue
+        }
+    }
+    
     // MARK: - Private Properties
+    
+    private var configuration: HLSAssetConfiguration
+    private let logger: Logger
     private var downloadSession: AVAssetDownloadURLSession!
-    private let cacheLimit = AmbienceService.cacheLimit
-    private let targetBitrate:Double = AmbienceService.targetBitrate
-    private let cacheDirectory: URL
-    private let metadataURL: URL
-    private var assetMetadata: [String: AssetMetadata] = [:]
+    private let cacheManager: CacheManager
+    private let variantSelector: VariantSelector
+    private let filenameStrategy: FilenameStrategy
     
-    // Modern logging
-    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "HLSAssetManager")
-
-    // To prevent re-downloading the same asset concurrently
+    // Download coordination
     private var activeDownloadTasks: [URL: Task<URL, Error>] = [:]
+    private var downloadStates: [AVAssetDownloadTask: DownloadState] = [:]
     
-    private var sourceLookUpTable: [URL: URL] = [:]
+    // MARK: - Initialization
     
-    // Delegate callbacks need a way to resume continuations
-    private var downloadContinuations: [AVAssetDownloadTask: CheckedContinuation<URL, Error>] = [:]
-
-    private override init() {
+    override private init() {
+        // Initialize configuration from AmbienceService settings
+        self.configuration = HLSAssetConfiguration(
+            cacheLimit: AmbienceService.cacheLimit,
+            targetBitrate: AmbienceService.targetBitrate,
+            enableDebugLogging: false  // Default to false, can be changed via public API
+        )
         
-        assert(cacheLimit >= 0, "Can not set a negative cache limit.")
-        assert(targetBitrate >= 0, "Can not set a negative bitrate.")
+        guard configuration.isValid else {
+            fatalError("Invalid HLS asset configuration")
+        }
         
+        // Initialize logger
+        self.logger = Logger(
+            subsystem: Bundle.main.bundleIdentifier ?? "com.ambience",
+            category: "HLSAssetManager"
+        )
+        
+        // Initialize cache directory
         let fileManager = FileManager.default
-        // Create a dedicated directory for HLS assets in Caches
         let cacheBaseURL = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        self.cacheDirectory = cacheBaseURL.appendingPathComponent("HLSAssets")
-        self.metadataURL = self.cacheDirectory.appendingPathComponent("metadata.json")
-
+        let cacheDirectory = cacheBaseURL.appendingPathComponent("HLSAssets")
+        
+        // Initialize sub-managers with configuration
+        self.cacheManager = CacheManager(
+            cacheDirectory: cacheDirectory,
+            cacheLimit: configuration.cacheLimit,
+            logger: logger,
+            enableDebugLogging: configuration.enableDebugLogging
+        )
+        self.variantSelector = VariantSelector(
+            logger: logger,
+            enableDebugLogging: configuration.enableDebugLogging
+        )
+        self.filenameStrategy = FilenameStrategy(
+            logger: logger,
+            enableDebugLogging: configuration.enableDebugLogging
+        )
+        
         super.init()
-
-        // Ensure the cache directory exists
-        try? fileManager.createDirectory(at: self.cacheDirectory, withIntermediateDirectories: true)
         
-        loadMetadata()
+        // Setup download session (MUST use background configuration for AVAssetDownloadURLSession)
+        let sessionConfig = URLSessionConfiguration.background(
+            withIdentifier: "com.ambience.hlsAssetManager.\(UUID().uuidString)"
+        )
+        sessionConfig.isDiscretionary = false  // Download immediately
+        sessionConfig.sessionSendsLaunchEvents = true  // Support background downloads
         
-        // Setup background download session
-        let configuration = URLSessionConfiguration.background(withIdentifier: "com.ambience.hlsAssetManager")
-        self.downloadSession = AVAssetDownloadURLSession(configuration: configuration,
-                                                       assetDownloadDelegate: self,
-                                                       delegateQueue: OperationQueue.main)
-    }
-
-    /// Returns the local URL for a given remote URL if it's already cached.
-    private func localAssetURL(for remoteURL: URL) -> URL? {
-        let filename = safeFilename(for: remoteURL)
-        if assetMetadata[filename] != nil {
-            let localURL = cacheDirectory.appendingPathComponent(filename)
-            if FileManager.default.fileExists(atPath: localURL.path) {
-                return localURL
-            }
+        self.downloadSession = AVAssetDownloadURLSession(
+            configuration: sessionConfig,
+            assetDownloadDelegate: self,
+            delegateQueue: OperationQueue.main
+        )
+        
+        if configuration.enableDebugLogging {
+            logger.info("HLS Asset Manager initialized")
         }
-        return nil
     }
-
-    /// Downloads an HLS asset from a remote URL and stores it in the cache.
-    /// If the asset is already being downloaded, it awaits the result of the existing download.
+    
+    // MARK: - Public Methods
+    
+    /// Downloads an HLS asset from a remote URL and stores it in the cache
+    /// - Parameter remoteURL: The source URL of the music item
+    /// - Returns: The local URL where the cached asset is stored
+    /// - Throws: `HLSAssetError` if download fails
+    /// - Note: If the asset is already being downloaded, awaits the result of the existing download
     func getAsset(from remoteURL: URL) async throws -> URL {
-        // If already cached, return the local URL immediately.
-        if let localURL = localAssetURL(for: remoteURL) {
-            Self.logger.info("Cache hit for URL: \(remoteURL.absoluteString)")
-            return localURL
+        if configuration.enableDebugLogging {
+            logger.info("Fetching asset for: \(remoteURL.lastPathComponent)")
         }
         
+        // Check cache first
+        if let cachedURL = await cacheManager.getCachedAssetURL(for: remoteURL) {
+            if configuration.enableDebugLogging {
+                logger.info("Cache hit, returning: \(cachedURL.lastPathComponent)")
+            }
+            return cachedURL
+        }
+        
+        // Fetch HLS URL from HTML
+        if configuration.enableDebugLogging {
+            logger.info("Fetching ambience artwork URL from HTML")
+        }
         let htmlContent = try await HTMLFetcher.fetchHTMLContent(from: remoteURL)
         let hlsURL = try AmbienceArtworkExtractor.extractAmbienceArtworkURL(from: htmlContent)
-
-        // If a download for this URL is already in progress, await its result.
+        
+        if configuration.enableDebugLogging {
+            logger.info("HLS URL extracted: \(hlsURL.lastPathComponent)")
+        }
+        
+        // Check if download is already in progress
         if let existingTask = activeDownloadTasks[hlsURL] {
-            Self.logger.info("Download already in progress for URL: \(remoteURL.absoluteString). Awaiting result.")
+            if configuration.enableDebugLogging {
+                logger.info("Download already in progress, awaiting completion")
+            }
             return try await existingTask.value
         }
-
-        let downloadTask = Task {
-            defer {
-                // Clean up after the task is complete
-                    self.activeDownloadTasks.removeValue(forKey: hlsURL)
-                    self.sourceLookUpTable.removeValue(forKey: hlsURL)
-                    self.isDownloading = false
-                
-            }
-            Self.logger.info("Cache miss for URL: \(hlsURL.absoluteString). Starting new download.")
-            return try await performDownload(from: hlsURL)
-        }
-
-        // Store the new task
-            self.isDownloading = true
-            self.activeDownloadTasks[hlsURL] = downloadTask
-            self.sourceLookUpTable[hlsURL] = remoteURL
         
-
-        return try await downloadTask.value
+        // Start new download
+        if configuration.enableDebugLogging {
+            logger.info("Starting download for: \(hlsURL.lastPathComponent)")
+        }
+        
+        let downloadTask = Task { [weak self] in
+            guard let self = self else {
+                throw HLSAssetError.downloadLocationNotFound
+            }
+            
+            defer {
+                Task {
+                    await self.cleanupDownloadTask(for: hlsURL)
+                }
+            }
+            
+            return try await self.performDownload(hlsURL: hlsURL, sourceURL: remoteURL)
+        }
+        
+        activeDownloadTasks[hlsURL] = downloadTask
+        isDownloading = true
+        
+        let finalURL = try await downloadTask.value
+        
+        if configuration.enableDebugLogging {
+            logger.info("Asset download complete: \(finalURL.lastPathComponent)")
+        }
+        
+        return finalURL
     }
     
-    // MARK: - Private Core Logic
-    private func performDownload(from remoteURL: URL) async throws -> URL {
+    // MARK: - Private Methods
+    
+    private func performDownload(hlsURL: URL, sourceURL: URL) async throws -> URL {
         return try await withCheckedThrowingContinuation { continuation in
-            Task{
-                let asset = AVURLAsset(url: remoteURL)
+            Task {
+                let asset = AVURLAsset(url: hlsURL)
                 
-                // Asynchronously load variants to select resolution
-                guard let variants = try? await asset.load(.variants) else {return}
+                // Load available video variants
+                let variants: [AVAssetVariant]
+                do {
+                    variants = try await asset.load(.variants)
+                } catch {
+                    logger.error("Failed to load variants: \(error.localizedDescription)")
+                    continuation.resume(throwing: HLSAssetError.failedToLoadVariants(underlying: error))
+                    return
+                }
                 
                 guard !variants.isEmpty else {
-                    continuation.resume(throwing: NSError(domain: "HLSAssetManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "No video variants found."]))
+                    logger.error("No video variants available for asset")
+                    continuation.resume(throwing: HLSAssetError.noVariantsFound)
                     return
                 }
                 
-                let bestVariant = variants.sorted { left, right in
-                    left.averageBitRate ?? 0 < right.averageBitRate ?? 0
-                }.first { $0.averageBitRate ?? 0 >= self.targetBitrate }
+                // Select best variant
+                let selectedVariant = variantSelector.selectBestVariant(
+                    from: variants,
+                    targetBitrate: configuration.targetBitrate
+                )
                 
-                
-                var options: [String: Any]? = nil
-                if let variant = bestVariant {
-                    options = [AVAssetDownloadTaskMinimumRequiredMediaBitrateKey: variant.averageBitRate ?? 0]
+                // Prepare download options
+                var options: [String: Any] = [:]
+                if let variant = selectedVariant, let bitrate = variant.averageBitRate {
+                    options[AVAssetDownloadTaskMinimumRequiredMediaBitrateKey] = bitrate
                 }
                 
-                guard let task = self.downloadSession.makeAssetDownloadTask(asset: asset,
-                                                                            assetTitle: remoteURL.lastPathComponent,
-                                                                            assetArtworkData: nil,
-                                                                            options: options) else {
-                    continuation.resume(throwing: NSError(domain: "HLSAssetManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Failed to create download task."]))
+                // Add media selection
+                if #available(macOS 13.0, iOS 16.0, *) {
+                    if let mediaSelection = try? await asset.load(.preferredMediaSelection) {
+                        options[AVAssetDownloadTaskMediaSelectionKey] = mediaSelection
+                    }
+                } else {
+                    options[AVAssetDownloadTaskMediaSelectionKey] = asset.preferredMediaSelection
+                }
+                
+                // Create download task
+                guard let task = downloadSession.makeAssetDownloadTask(
+                    asset: asset,
+                    assetTitle: hlsURL.lastPathComponent,
+                    assetArtworkData: nil,
+                    options: options.isEmpty ? nil : options
+                ) else {
+                    logger.error("Failed to create download task")
+                    continuation.resume(throwing: HLSAssetError.failedToCreateDownloadTask)
                     return
                 }
                 
-                self.downloadContinuations[task] = continuation
+                // Store download state for tracking
+                let state = DownloadState(
+                    task: task,
+                    continuation: continuation,
+                    sourceURL: sourceURL,
+                    hlsURL: hlsURL,
+                    downloadLocation: nil,
+                    destinationURL: nil
+                )
+                downloadStates[task] = state
+                
+                // Start download
                 task.resume()
+                
+                if configuration.enableDebugLogging {
+                    logger.info("Download task started")
+                }
             }
+        }
+    }
+    
+    private func cleanupDownloadTask(for hlsURL: URL) {
+        activeDownloadTasks.removeValue(forKey: hlsURL)
+        if activeDownloadTasks.isEmpty {
+            isDownloading = false
         }
     }
 }
 
 // MARK: - AVAssetDownloadDelegate
-extension HLSAssetManager: AVAssetDownloadDelegate {
-    func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask, didFinishDownloadingTo location: URL) async {
-        guard let continuation = downloadContinuations.removeValue(forKey: assetDownloadTask) else { return }
-        
-        let hlsURL = assetDownloadTask.urlAsset.url
-        let filename = safeFilename(for: sourceLookUpTable[hlsURL]!)
-        let destinationURL = cacheDirectory.appendingPathComponent(filename)
 
-        do {
-            // Move the downloaded asset from the temp location to our cache directory
-            try? FileManager.default.removeItem(at: destinationURL) // Remove old file if it exists
-            try FileManager.default.moveItem(at: location, to: destinationURL)
-            
-            Self.logger.info("Successfully downloaded and cached asset from \(hlsURL.absoluteString) to \(destinationURL.path)")
-            
-            // Update metadata
-            let metadata = AssetMetadata(localFilename: filename,
-                                         creationDate: Date())
-            addAssetToMetadata(metadata)
-            
-            continuation.resume(returning: destinationURL)
-        } catch {
-            Self.logger.error("Failed to move downloaded asset for \(hlsURL.absoluteString). Error: \(error.localizedDescription)")
-            continuation.resume(throwing: error)
+extension HLSAssetManager: AVAssetDownloadDelegate {
+    
+    nonisolated func urlSession(
+        _ session: URLSession,
+        assetDownloadTask: AVAssetDownloadTask,
+        didResolve resolvedMediaSelection: AVMediaSelection
+    ) {
+        // Media selection resolved - no logging needed unless debug mode
+        Task {
+            if await self.configuration.enableDebugLogging {
+                logger.info("Media selection resolved")
+            }
         }
     }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) async {
-        guard let assetDownloadTask = task as? AVAssetDownloadTask,
-              let continuation = downloadContinuations.removeValue(forKey: assetDownloadTask) else {
+    
+    nonisolated func urlSession(
+        _ session: URLSession,
+        assetDownloadTask: AVAssetDownloadTask,
+        didLoad timeRange: CMTimeRange,
+        totalTimeRangesLoaded loadedTimeRanges: [NSValue],
+        timeRangeExpectedToLoad: CMTimeRange
+    ) {
+        // Calculate download progress
+        let expectedDuration = CMTimeGetSeconds(timeRangeExpectedToLoad.duration)
+        var loadedDuration: TimeInterval = 0
+        
+        for value in loadedTimeRanges {
+            loadedDuration += CMTimeGetSeconds(value.timeRangeValue.duration)
+        }
+        
+        let percentComplete = expectedDuration > 0 ? (loadedDuration / expectedDuration) * 100 : 0
+        
+        // Notify progress callback
+        let progress = DownloadProgress(
+            url: assetDownloadTask.urlAsset.url,
+            percentComplete: percentComplete,
+            loadedDuration: loadedDuration,
+            expectedDuration: expectedDuration
+        )
+        
+        Task {
+            if await self.configuration.enableDebugLogging {
+                logger.info("Download progress: \(String(format: "%.1f", percentComplete))% (\(String(format: "%.1f", loadedDuration))s / \(String(format: "%.1f", expectedDuration))s)")
+            }
+            await self.onProgressUpdate?(progress)
+        }
+    }
+    
+    nonisolated func urlSession(
+        _ session: URLSession,
+        assetDownloadTask: AVAssetDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        Task {
+            if await self.configuration.enableDebugLogging {
+                logger.info("Download finished, processing file")
+            }
+            await self.handleDownloadFinished(task: assetDownloadTask, location: location)
+        }
+    }
+    
+    private func handleDownloadFinished(task: AVAssetDownloadTask, location: URL) {
+        guard var state = downloadStates[task] else {
+            if configuration.enableDebugLogging {
+                logger.warning("No download state found for task")
+            }
             return
         }
-
+        
+        if configuration.enableDebugLogging {
+            logger.info("Updating state with download location")
+        }
+        
+        // Update state with download location
+        state.downloadLocation = location
+        downloadStates[task] = state
+    }
+    
+    nonisolated func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        Task {
+            await self.handleTaskCompletion(task: task, error: error)
+        }
+    }
+    
+    private func handleTaskCompletion(task: URLSessionTask, error: Error?) async {
+        guard let assetDownloadTask = task as? AVAssetDownloadTask else {
+            if configuration.enableDebugLogging {
+                logger.warning("Completed task is not an asset download task")
+            }
+            return
+        }
+        
+        guard let state = downloadStates.removeValue(forKey: assetDownloadTask) else {
+            if configuration.enableDebugLogging {
+                logger.warning("No state found for completed task")
+            }
+            return
+        }
+        
+        if configuration.enableDebugLogging {
+            logger.info("Processing completed download")
+        }
+        
+        // Handle error
         if let error = error {
-            Self.logger.error("Download failed for task \(assetDownloadTask.urlAsset.url.absoluteString) with error: \(error.localizedDescription)")
-            continuation.resume(throwing: error)
+            logger.error("Download failed: \(error.localizedDescription)")
+            state.continuation.resume(throwing: error)
+            return
+        }
+        
+        // Process successful download
+        guard let downloadLocation = state.downloadLocation else {
+            logger.error("Download location not found in state")
+            state.continuation.resume(throwing: HLSAssetError.downloadLocationNotFound)
+            return
+        }
+        
+        if configuration.enableDebugLogging {
+            logger.info("Moving file from temporary location to cache")
+        }
+        
+        do {
+            // Store in cache
+            let finalURL = try await cacheManager.storeAsset(
+                from: downloadLocation,
+                for: state.sourceURL
+            )
+            
+            logger.info("Download complete, asset cached successfully")
+            
+            // Resume continuation with final URL
+            state.continuation.resume(returning: finalURL)
+            
+        } catch {
+            logger.error("Failed to cache asset: \(error.localizedDescription)")
+            state.continuation.resume(throwing: HLSAssetError.failedToMoveAsset(underlying: error))
         }
     }
 }
-
-
-// MARK: - Metadata and Cache Management
-private extension HLSAssetManager {
-    /// A metadata structure to track cached assets.
-    struct AssetMetadata: Codable {
-        let localFilename: String
-        let creationDate: Date
-    }
-    /// try to extract the album id or the playlist id as the key to improve cache hit rate.
-    func safeFilename(for url: URL) -> String {
-        let urlString = url.absoluteString
-        var name = urlString
-        if let match = urlString.range(of: #"album/[^/]+/(\d+)"#, options: .regularExpression) {
-            //https://music.apple.com/cn/album/lover/1468058165?l=en-GB
-            let path = urlString[match]
-            if let id = path.split(separator: "/").last {
-                Self.logger.info("Convert the id to album \(id)")
-                name = String(id)
-                return name+".movpkg"
-            }
-        }
-        if let match = urlString.range(of:"pl\\.([a-zA-Z0-9]+)", options: .regularExpression) {
-            //https://music.apple.com/cn/playlist/12-星座歌单-巨蟹月/pl.00ead18e05ad4267b7a7f167923dc79f
-            let path = urlString[match]
-            if let id = path.split(separator: ".").last {
-                Self.logger.info("Convert the id to playlist \(id)")
-                name = String(id)
-                return name+".movpkg"
-            }
-        }
-        
-        //if can not match the album or the playlist,then fallback.
-        if urlString.hasPrefix("https://music.apple.com") {
-            let trimmed = urlString
-                .replacingOccurrences(of: "https://music.apple.com", with: "")
-                .replacingOccurrences(of: "/", with: "")
-            return trimmed+".movpkg"
-        }
-        return name+".movpkg"
-    }
-
-    func loadMetadata() {
-        guard FileManager.default.fileExists(atPath: metadataURL.path),
-              let data = try? Data(contentsOf: metadataURL),
-              let decodedMetadata = try? JSONDecoder().decode([String: AssetMetadata].self, from: data) else {
-            Self.logger.info("No existing metadata found. Starting fresh.")
-            self.assetMetadata = [:]
-            return
-        }
-        self.assetMetadata = decodedMetadata
-        Self.logger.info("Successfully loaded HLS asset metadata for \(self.assetMetadata.count) items.")
-    }
-
-    func saveMetadata() {
-        do {
-            let data = try JSONEncoder().encode(assetMetadata)
-            try data.write(to: metadataURL, options: .atomic)
-        } catch {
-            Self.logger.error("Failed to save HLS asset metadata: \(error.localizedDescription)")
-        }
-    }
-
-    func addAssetToMetadata(_ metadata: AssetMetadata) {
-        assetMetadata[metadata.localFilename] = metadata
-        enforceCacheLimit()
-        saveMetadata()
-    }
-
-    func enforceCacheLimit() {
-        guard assetMetadata.count > cacheLimit else { return }
-
-        // Sort by creation date to find the oldest assets
-        let sortedAssets = assetMetadata.values.sorted { $0.creationDate < $1.creationDate }
-        
-        // Number of assets to remove
-        let assetsToRemoveCount = assetMetadata.count - cacheLimit
-        let assetsToRemove = sortedAssets.prefix(assetsToRemoveCount)
-
-        for asset in assetsToRemove {
-            let localURL = cacheDirectory.appendingPathComponent(asset.localFilename)
-            try? FileManager.default.removeItem(at: localURL)
-            assetMetadata.removeValue(forKey: asset.localFilename)
-            Self.logger.info("Cache limit reached. Removed old asset: \(asset.localFilename)")
-        }
-    }
-} 
